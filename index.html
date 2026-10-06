@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>團隊企劃練習與拍攝人力調遣系統</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            darkBg: '#121212',
+            cardBg: '#1e1e1e',
+            cardHover: '#2a2a2a',
+            primary: '#bb86fc',
+            secondary: '#03dac6',
+            danger: '#cf6679',
+            statusGreen: '#4caf50',
+            statusGray: '#666666',
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    body {
+      background-color: #121212;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      touch-action: manipulation;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      height: 6px;
+      width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #1e1e1e;
+      border-radius: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #333333;
+      border-radius: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #bb86fc;
+    }
+  </style>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // Setup configuration and App ID
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'team-dispatch-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' 
+      ? JSON.parse(__firebase_config) 
+      : {
+          apiKey: "demo-key",
+          authDomain: "demo-app.firebaseapp.com",
+          projectId: "demo-app",
+          storageBucket: "demo-app.appspot.com",
+          messagingSenderId: "000000000000",
+          appId: "1:000000000000:web:000000000000"
+        };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // Global references
+    window.db = db;
+    window.appId = appId;
+    window.auth = auth;
+
+    // Strict Collection Path Helper (RULE 1 Compliance)
+    window.getPublicDocRef = (collName, docId) => doc(db, 'artifacts', appId, 'public', 'data', collName, docId);
+
+    // Authenticate securely
+    async function initAuth() {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.warn("Firebase Auth fallback to anonymous mode:", err);
+      }
+    }
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        window.currentFirebaseUid = user.uid;
+        if (window.startRealtimeListeners) {
+          window.startRealtimeListeners();
+        }
+      }
+    });
+
+    initAuth();
+  </script>
+</head>
+<body class="min-h-screen bg-darkBg text-gray-200 flex flex-col justify-between">
+
+  <div id="app" class="flex-1 flex flex-col max-w-4xl w-full mx-auto p-3 sm:p-5">
+    
+    <!-- Top Header Navigation -->
+    <header id="app-header" class="hidden mb-4 bg-cardBg p-4 rounded-xl border border-gray-800 shadow-lg justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center font-bold text-black text-lg shadow">
+          <span id="user-avatar-text">U</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 id="user-display-name" class="font-bold text-lg text-white">使用者</h2>
+            <span id="user-role-badge" class="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 font-semibold">一般成員</span>
+            <span id="sync-status-badge" class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+              <i class="fa-solid fa-cloud-check mr-1"></i>多端即時同步中
+            </span>
+          </div>
+          <p class="text-xs text-gray-400">團隊人力與企劃調遣系統</p>
+        </div>
+      </div>
+      <button onclick="logout()" class="px-3 py-1.5 text-xs sm:text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-700 transition flex items-center gap-1.5">
+        <i class="fa-solid fa-right-from-bracket"></i> 登出
+      </button>
+    </header>
+
+    <!-- Main View Switcher -->
+    <main class="flex-1">
+
+      <section id="view-auth" class="flex flex-col items-center justify-center min-h-[80vh]">
+        <div class="w-full max-w-md bg-cardBg p-6 sm:p-8 rounded-2xl border border-gray-800 shadow-2xl backdrop-blur-sm">
+          <div class="text-center mb-6">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 text-primary mb-3 border border-primary/20 shadow-inner">
+              <i class="fa-solid fa-users-gear text-3xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-white tracking-wide">團隊企劃與人力調遣系統</h1>
+            <p class="text-xs text-gray-400 mt-1">手機與電腦內容即時同步 • 練習與拍攝人力最佳調遣</p>
+          </div>
+
+          <!-- Auth Mode Toggle Tabs -->
+          <div class="flex bg-gray-900/80 p-1 rounded-xl mb-6 border border-gray-800">
+            <button id="tab-login-user" onclick="switchAuthTab('user')" class="flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all bg-primary text-black shadow">一般登入</button>
+            <button id="tab-login-admin" onclick="switchAuthTab('admin')" class="flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition-all">管理者登入</button>
+            <button id="tab-register" onclick="switchAuthTab('register')" class="flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition-all">首次註冊</button>
+          </div>
+
+          <!-- Auth Form -->
+          <form onsubmit="handleAuthSubmit(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">姓名 / 帳號</label>
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+                  <i class="fa-solid fa-user"></i>
+                </span>
+                <input type="text" id="auth-name" required placeholder="請輸入姓名" class="w-full pl-10 pr-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl focus:outline-none focus:border-primary text-sm text-white placeholder-gray-500">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">密碼</label>
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+                  <i class="fa-solid fa-lock"></i>
+                </span>
+                <input type="password" id="auth-password" required placeholder="請輸入密碼" class="w-full pl-10 pr-3 py-2.5 bg-gray-900 border border-gray-700 rounded-xl focus:outline-none focus:border-primary text-sm text-white placeholder-gray-500">
+              </div>
+            </div>
+
+            <div id="auth-hint" class="text-xs text-gray-400 bg-gray-900/50 p-2.5 rounded-lg border border-gray-800 hidden">
+              💡 管理者預設帳號: <span class="text-primary font-mono">midnight</span> / 密碼: <span class="text-primary font-mono">midnight1027</span>
+            </div>
+
+            <button type="submit" id="auth-submit-btn" class="w-full py-3 bg-primary hover:bg-primary/90 text-black font-bold rounded-xl shadow-lg transition-transform active:scale-[0.99] mt-2">
+              登入系統
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-dashboard" class="hidden space-y-5">
+        
+        <!-- Section 1: Scrollable Monthly To-Dos -->
+        <div class="bg-cardBg p-4 sm:p-5 rounded-2xl border border-gray-800 shadow-md">
+          <div class="flex justify-between items-center mb-3">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-calendar-check text-primary"></i>
+              <h3 class="font-bold text-white text-base">當月待辦事項</h3>
+            </div>
+            <button onclick="openTodoModal()" class="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-primary rounded-lg border border-gray-700 transition flex items-center gap-1">
+              <i class="fa-solid fa-pen-to-square"></i> 編輯事項
+            </button>
+          </div>
+
+          <!-- Horizontal Scroll Container -->
+          <div id="todo-list-container" class="flex space-x-3 overflow-x-auto custom-scrollbar pb-2 pt-1">
+            <!-- Dynamic Todo Cards populated by JS -->
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+          <button onclick="switchCategory('project')" id="nav-btn-project" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-cardBg border border-gray-800 hover:border-primary/50 text-gray-300 transition group shadow">
+            <i class="fa-solid fa-diagram-project text-xl mb-1 text-primary group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">專案</span>
+          </button>
+          <button onclick="switchCategory('plan')" id="nav-cat-plan" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-cardBg border border-gray-800 hover:border-primary/50 text-gray-300 transition group shadow">
+            <i class="fa-solid fa-lightbulb text-xl mb-1 text-yellow-400 group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">企劃</span>
+          </button>
+          <button onclick="switchCategory('competition')" id="nav-cat-competition" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-cardBg border border-gray-800 hover:border-primary/50 text-gray-300 transition group shadow">
+            <i class="fa-solid fa-trophy text-xl mb-1 text-amber-500 group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">比賽</span>
+          </button>
+          <button onclick="switchCategory('commercial')" id="nav-cat-commercial" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-cardBg border border-gray-800 hover:border-primary/50 text-gray-300 transition group shadow">
+            <i class="fa-solid fa-briefcase text-xl mb-1 text-secondary group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">商演</span>
+          </button>
+          <button onclick="switchCategory('event')" id="nav-cat-event" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-cardBg border border-gray-800 hover:border-primary/50 text-gray-300 transition group shadow">
+            <i class="fa-solid fa-masks-theater text-xl mb-1 text-pink-400 group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">活動表演</span>
+          </button>
+          <button onclick="switchCategory('weekly')" id="nav-cat-weekly" class="nav-cat-btn flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl bg-gradient-to-r from-secondary/20 to-primary/20 border border-secondary/40 text-white transition group shadow">
+            <i class="fa-solid fa-users text-xl mb-1 text-secondary group-hover:scale-110 transition-transform"></i>
+            <span class="text-xs font-bold">當週人力</span>
+          </button>
+        </div>
+
+        <div id="panel-items" class="bg-cardBg p-4 sm:p-5 rounded-2xl border border-gray-800 shadow-md">
+          <div class="flex justify-between items-center mb-4">
+            <div class="flex items-center space-x-2">
+              <i id="current-category-icon" class="fa-solid fa-list text-primary"></i>
+              <h3 id="current-category-title" class="font-bold text-white text-lg">專案列表</h3>
+            </div>
+            <button onclick="openItemModal()" class="px-3 py-1.5 bg-primary hover:bg-primary/90 text-black font-bold text-xs sm:text-sm rounded-lg shadow transition flex items-center gap-1">
+              <i class="fa-solid fa-plus"></i> 新增項目
+            </button>
+          </div>
+
+          <!-- Dynamic Item Cards -->
+          <div id="items-list-container" class="space-y-3">
+            <!-- Item cards rendered dynamically -->
+          </div>
+        </div>
+
+        <div id="panel-weekly" class="hidden bg-cardBg p-4 sm:p-5 rounded-2xl border border-gray-800 shadow-md">
+          
+          <!-- Sub Tabs: Survey Form vs Attendance Schedule -->
+          <div class="flex bg-gray-900 p-1 rounded-xl mb-5 border border-gray-800">
+            <button id="tab-weekly-survey" onclick="switchWeeklySubTab('survey')" class="flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-secondary text-black shadow transition">
+              <i class="fa-solid fa-clipboard-question mr-1"></i> 人力調查表
+            </button>
+            <button id="tab-weekly-schedule" onclick="switchWeeklySubTab('schedule')" class="flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition">
+              <i class="fa-solid fa-calendar-days mr-1"></i> 當週人力表 (總覽)
+            </button>
+          </div>
+
+          <!-- Sub View 1: Survey Form with Precise Dates -->
+          <div id="weekly-subview-survey" class="space-y-4">
+            <div class="bg-gray-900/60 p-3.5 rounded-xl border border-gray-800 flex justify-between items-center flex-wrap gap-2">
+              <div>
+                <span class="text-xs text-gray-400">調查期間 (精確年月日):</span>
+                <span id="survey-date-range" class="text-sm font-bold text-secondary ml-1">計算中...</span>
+              </div>
+              <span class="text-xs px-2.5 py-1 bg-yellow-500/10 text-yellow-400 rounded-md border border-yellow-500/20 font-mono">
+                <i class="fa-regular fa-clock mr-1"></i>每週日結算後自動更換為下一週調查
+              </span>
+            </div>
+
+            <form onsubmit="handleSurveySubmit(event)" class="space-y-4 bg-gray-900/30 p-4 rounded-xl border border-gray-800/80">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">填寫成員 (自動預填)</label>
+                <input type="text" id="survey-user-name" readonly class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 cursor-not-allowed font-bold">
+              </div>
+
+              <!-- Absent Checkbox Toggle -->
+              <div class="flex items-center justify-between p-3 bg-red-950/20 border border-red-900/40 rounded-xl">
+                <span class="text-sm font-bold text-red-400">本週完全不克出席</span>
+                <input type="checkbox" id="survey-absent-check" onchange="toggleSurveyAbsent(this.checked)" class="w-5 h-5 accent-danger rounded cursor-pointer">
+              </div>
+
+              <!-- Dynamic Day Pickers with Exact Dates and Weekdays -->
+              <div id="survey-days-container">
+                <label class="block text-xs font-semibold text-gray-300 mb-2">可配合的時間 (複選各特定日期)：</label>
+                <div id="survey-days-grid" class="grid grid-cols-2 sm:grid-cols-7 gap-2">
+                  <!-- Rendered dynamically with exact dates by JS -->
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-gray-300 mb-1">備註 (選填)</label>
+                <input type="text" id="survey-note" placeholder="例如：週三晚到1小時 / 僅能到晚間8點" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white focus:border-secondary focus:outline-none">
+              </div>
+
+              <button type="submit" class="w-full py-2.5 bg-secondary hover:bg-secondary/90 text-black font-bold text-sm rounded-xl shadow transition">
+                送出 / 儲存我的出席調查
+              </button>
+            </form>
+          </div>
+
+          <!-- Sub View 2: Schedule Overview -->
+          <div id="weekly-subview-schedule" class="hidden space-y-3">
+            <div class="flex justify-between items-center text-xs text-gray-400 px-1">
+              <span>週日結算公佈當週全體成員出席表</span>
+              <span class="text-secondary font-mono">結算週區間: <span id="schedule-week-label">--</span></span>
+            </div>
+            
+            <div id="attendance-schedule-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <!-- Monday to Sunday Schedule Cards rendered with precise dates by JS -->
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+    </main>
+
+    <!-- Modal: Todo Editor -->
+    <div id="modal-todo" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+      <div class="bg-cardBg border border-gray-800 w-full max-w-lg rounded-2xl p-5 shadow-2xl space-y-4">
+        <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+          <h3 class="font-bold text-white text-base">編輯當月代辦事項</h3>
+          <button onclick="closeTodoModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+        
+        <div class="flex gap-2">
+          <input type="text" id="new-todo-input" placeholder="輸入新的代辦事項..." class="flex-1 bg-gray-900 border border-gray-700 text-sm rounded-xl px-3 py-2 text-white focus:outline-none focus:border-primary">
+          <button onclick="addTodo()" class="px-3 py-2 bg-primary text-black font-bold text-xs rounded-xl hover:bg-primary/90 transition">新增</button>
+        </div>
+
+        <div id="todo-manage-list" class="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+          <!-- Rendered dynamically -->
+        </div>
+        <div class="flex justify-end pt-2 border-t border-gray-800">
+          <button onclick="closeTodoModal()" class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300 rounded-lg">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Item Add & Edit -->
+    <div id="modal-item" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+      <div class="bg-cardBg border border-gray-800 w-full max-w-2xl rounded-2xl p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto custom-scrollbar">
+        <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+          <h3 id="modal-item-title" class="font-bold text-white text-lg">新增企劃/專案/活動表演</h3>
+          <button onclick="closeItemModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <form onsubmit="handleItemFormSubmit(event)" class="space-y-4">
+          <input type="hidden" id="item-form-id">
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">類別</label>
+              <select id="item-form-category" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+                <option value="project">專案</option>
+                <option value="plan">企劃</option>
+                <option value="competition">比賽</option>
+                <option value="commercial">商演</option>
+                <option value="event">活動表演</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">名稱 <span class="text-danger">*</span></label>
+              <input type="text" id="item-form-title" required placeholder="例：動漫祭特別公演" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">總負責人 <span class="text-danger">*</span></label>
+              <input type="text" id="item-form-main-leader" required placeholder="姓名" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">子負責人 (選填)</label>
+              <input type="text" id="item-form-sub-leader" placeholder="姓名" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">使用歌曲</label>
+              <input type="text" id="item-form-song" placeholder="例：紅蓮華 - LiSA" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-1">預計拍攝/表演日期</label>
+              <input type="date" id="item-form-shoot-date" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">參與人員 (請用逗號分隔)</label>
+            <input type="text" id="item-form-members" placeholder="例：midnight, 小明, 小華, 阿強" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">使用棒子顏色與數量</label>
+            <input type="text" id="item-form-stick-info" placeholder="例：大閃光紫色 x 12, 綠色 x 8" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary">
+          </div>
+
+          <!-- Segment Settings -->
+          <div class="border-t border-gray-800 pt-3 space-y-3">
+            <h4 class="text-xs font-bold text-primary flex items-center gap-1.5">
+              <i class="fa-solid fa-layer-group"></i> 各段落人員專用設定 (用於與當週人力動態出席聯動)
+            </h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">A melo 人員</label>
+                <input type="text" id="item-form-seg-a" placeholder="成員姓名 (逗號分隔)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">B melo 人員</label>
+                <input type="text" id="item-form-seg-b" placeholder="成員姓名 (逗號分隔)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">C melo 人員</label>
+                <input type="text" id="item-form-seg-c" placeholder="成員姓名 (逗號分隔)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Last 段落人員</label>
+                <input type="text" id="item-form-seg-last" placeholder="成員姓名 (逗號分隔)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-3 border-t border-gray-800">
+            <button type="button" onclick="closeItemModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 rounded-xl font-semibold">取消</button>
+            <button type="submit" class="px-5 py-2 bg-primary hover:bg-primary/90 text-black font-bold text-xs rounded-xl shadow">儲存內容</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Exact Dynamic Date Helpers (Automatic Week/Next Week Calculations based on Sunday Roll-over)
+    function getWeekDays(targetDate = new Date()) {
+      const d = new Date(targetDate);
+      const day = d.getDay(); // 0 is Sun, 1 is Mon...
+      // Calculate Monday of current week
+      const diffToMon = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d);
+      monday.setDate(diffToMon);
+
+      const days = [];
+      const keys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const labels = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'];
+
+      for (let i = 0; i < 7; i++) {
+        const current = new Date(monday);
+        current.setDate(monday.getDate() + i);
+        const mm = String(current.getMonth() + 1).padStart(2, '0');
+        const dd = String(current.getDate()).padStart(2, '0');
+        const yyyy = current.getFullYear();
+
+        days.push({
+          key: keys[i],
+          label: labels[i],
+          shortDate: `${mm}/${dd}`,
+          fullDate: `${yyyy}-${mm}-${dd}`,
+          displayText: `${labels[i]} (${yyyy}/${mm}/${dd})`
+        });
+      }
+      return days;
+    }
+
+    // Survey displays next week's dates by default (1 week offset)
+    let surveyWeekOffset = 1; 
+    let currentWeekDays = getWeekDays(new Date());
+    let activeSurveyWeekDays = getWeekDays(new Date(Date.now() + surveyWeekOffset * 7 * 86400000));
+
+    function getSurveyRangeString(days) {
+      return `${days[0].fullDate.replace(/-/g, '/')} (${days[0].label}) ~ ${days[6].fullDate.replace(/-/g, '/')} (${days[6].label})`;
+    }
+
+    let state = {
+      currentUser: null,
+      users: [
+        { name: 'midnight', password: 'midnight1027', role: 'admin' },
+        { name: '小明', password: '123', role: 'user' },
+        { name: '小華', password: '123', role: 'user' },
+        { name: '阿強', password: '123', role: 'user' }
+      ],
+      todos: [
+        { id: '1', text: '確定拍攝地點與道具配備' },
+        { id: '2', text: '商演團練 (全員19:00點到場)' }
+      ],
+      items: [
+        {
+          id: '101',
+          category: 'project',
+          title: '【專案】動漫極限舞彈 Cover',
+          mainLeader: 'midnight',
+          subLeader: '小明',
+          song: '千本櫻 - 初音未來',
+          members: ['midnight', '小明', '小華', '阿強'],
+          shootDate: currentWeekDays[4].fullDate,
+          stickInfo: '螢光棒櫻花粉 x 10, 白色 x 10',
+          segments: {
+            a: ['midnight', '小明'],
+            b: ['小華', '阿強'],
+            c: ['midnight', '小華'],
+            last: ['midnight', '小明', '小華', '阿強']
+          },
+          isPinned: true
+        },
+        {
+          id: '102',
+          category: 'event',
+          title: '【活動表演】動漫祭戶外快閃公演',
+          mainLeader: 'midnight',
+          subLeader: '阿強',
+          song: '偶像 - YOASOBI',
+          members: ['midnight', '小華', '阿強'],
+          shootDate: currentWeekDays[5].fullDate,
+          stickInfo: '大閃光黃色 x 12',
+          segments: {
+            a: ['midnight'],
+            b: ['小華', '阿強'],
+            c: ['midnight', '小華'],
+            last: ['midnight', '小華', '阿強']
+          },
+          isPinned: true
+        }
+      ],
+      attendance: []
+    };
+
+    let currentCategory = 'project';
+    let authTabMode = 'user';
+
+    // Start Realtime Firestore Listeners for Cloud Syncing across all devices
+    window.startRealtimeListeners = function() {
+      if (!window.db || !window.getPublicDocRef) return;
+
+      // Sync Todos
+      onSnapshot(window.getPublicDocRef('appState', 'todosDoc'), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().todos) {
+          state.todos = docSnap.data().todos;
+          renderTodos();
+        } else {
+          saveTodosToCloud();
+        }
+      }, (err) => console.warn("Firestore todos sync listener err:", err));
+
+      // Sync Items
+      onSnapshot(window.getPublicDocRef('appState', 'itemsDoc'), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().items) {
+          state.items = docSnap.data().items;
+          renderItemsList();
+        } else {
+          saveItemsToCloud();
+        }
+      }, (err) => console.warn("Firestore items sync listener err:", err));
+
+      // Sync Attendance Survey
+      onSnapshot(window.getPublicDocRef('appState', 'attendanceDoc'), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().attendance) {
+          state.attendance = docSnap.data().attendance;
+          if (state.currentUser) {
+            setupSurveyForm();
+            renderAttendanceSchedule();
+          }
+        } else {
+          saveAttendanceToCloud();
+        }
+      }, (err) => console.warn("Firestore attendance sync listener err:", err));
+
+      // Sync Registered Users
+      onSnapshot(window.getPublicDocRef('appState', 'usersDoc'), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().users) {
+          state.users = docSnap.data().users;
+        } else {
+          saveUsersToCloud();
+        }
+      }, (err) => console.warn("Firestore users sync listener err:", err));
+    };
+
+    async function saveTodosToCloud() {
+      if (!window.db) return;
+      try {
+        await setDoc(window.getPublicDocRef('appState', 'todosDoc'), { todos: state.todos });
+      } catch (e) { console.error("Error saving todos:", e); }
+    }
+
+    async function saveItemsToCloud() {
+      if (!window.db) return;
+      try {
+        await setDoc(window.getPublicDocRef('appState', 'itemsDoc'), { items: state.items });
+      } catch (e) { console.error("Error saving items:", e); }
+    }
+
+    async function saveAttendanceToCloud() {
+      if (!window.db) return;
+      try {
+        await setDoc(window.getPublicDocRef('appState', 'attendanceDoc'), { attendance: state.attendance });
+      } catch (e) { console.error("Error saving attendance:", e); }
+    }
+
+    async function saveUsersToCloud() {
+      if (!window.db) return;
+      try {
+        await setDoc(window.getPublicDocRef('appState', 'usersDoc'), { users: state.users });
+      } catch (e) { console.error("Error saving users:", e); }
+    }
+
+    function switchAuthTab(mode) {
+      authTabMode = mode;
+      const btnUser = document.getElementById('tab-login-user');
+      const btnAdmin = document.getElementById('tab-login-admin');
+      const btnReg = document.getElementById('tab-register');
+      const hint = document.getElementById('auth-hint');
+      const submitBtn = document.getElementById('auth-submit-btn');
+
+      [btnUser, btnAdmin, btnReg].forEach(btn => {
+        btn.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition-all";
+      });
+
+      if (mode === 'user') {
+        btnUser.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-primary text-black shadow transition-all";
+        hint.classList.add('hidden');
+        submitBtn.innerText = "一般登入";
+        submitBtn.className = "w-full py-3 bg-primary hover:bg-primary/90 text-black font-bold rounded-xl shadow-lg transition";
+      } else if (mode === 'admin') {
+        btnAdmin.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-secondary text-black shadow transition-all";
+        hint.classList.remove('hidden');
+        submitBtn.innerText = "管理者登入";
+        submitBtn.className = "w-full py-3 bg-secondary hover:bg-secondary/90 text-black font-bold rounded-xl shadow-lg transition";
+      } else if (mode === 'register') {
+        btnReg.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-amber-400 text-black shadow transition-all";
+        hint.classList.add('hidden');
+        submitBtn.innerText = "註冊帳號";
+        submitBtn.className = "w-full py-3 bg-amber-400 hover:bg-amber-300 text-black font-bold rounded-xl shadow-lg transition";
+      }
+    }
+
+    function handleAuthSubmit(e) {
+      e.preventDefault();
+      const name = document.getElementById('auth-name').value.trim();
+      const pwd = document.getElementById('auth-password').value.trim();
+
+      if (!name || !pwd) {
+        alert('請填寫姓名與密碼！');
+        return;
+      }
+
+      if (authTabMode === 'register') {
+        const exist = state.users.find(u => u.name === name);
+        if (exist) {
+          alert('該姓名已經註冊過，請直接登入！');
+          return;
+        }
+        const newUser = { name, password: pwd, role: 'user' };
+        state.users.push(newUser);
+        saveUsersToCloud();
+        alert('註冊成功！已為您登入。');
+        loginUser(newUser);
+      } else if (authTabMode === 'admin') {
+        const user = state.users.find(u => u.name === name && u.password === pwd && u.role === 'admin');
+        if (user || (name === 'midnight' && pwd === 'midnight1027')) {
+          loginUser({ name: 'midnight', role: 'admin' });
+        } else {
+          alert('管理者帳號或密碼不正確！(預設: midnight / midnight1027)');
+        }
+      } else {
+        const user = state.users.find(u => u.name === name && u.password === pwd);
+        if (user) {
+          loginUser(user);
+        } else {
+          alert('帳號或密碼錯誤！若尚未註冊請點選「首次註冊」。');
+        }
+      }
+    }
+
+    function loginUser(user) {
+      state.currentUser = user;
+      document.getElementById('view-auth').classList.add('hidden');
+      document.getElementById('view-dashboard').classList.remove('hidden');
+      document.getElementById('app-header').classList.remove('hidden');
+      document.getElementById('app-header').classList.add('flex');
+
+      document.getElementById('user-display-name').innerText = user.name;
+      document.getElementById('user-avatar-text').innerText = user.name.charAt(0).toUpperCase();
+      const roleBadge = document.getElementById('user-role-badge');
+      
+      if (user.role === 'admin') {
+        roleBadge.innerText = '管理者';
+        roleBadge.className = 'text-xs px-2 py-0.5 rounded bg-secondary/20 text-secondary border border-secondary/30 font-semibold';
+      } else {
+        roleBadge.innerText = '一般成員';
+        roleBadge.className = 'text-xs px-2 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 font-semibold';
+      }
+
+      renderTodos();
+      switchCategory('project');
+      setupSurveyForm();
+      renderAttendanceSchedule();
+    }
+
+    function logout() {
+      state.currentUser = null;
+      document.getElementById('view-dashboard').classList.add('hidden');
+      document.getElementById('app-header').classList.add('hidden');
+      document.getElementById('app-header').classList.remove('flex');
+      document.getElementById('view-auth').classList.remove('hidden');
+      document.getElementById('auth-name').value = '';
+      document.getElementById('auth-password').value = '';
+    }
+
+    function renderTodos() {
+      const container = document.getElementById('todo-list-container');
+      container.innerHTML = '';
+
+      if (state.todos.length === 0) {
+        container.innerHTML = `<span class="text-xs text-gray-500 italic p-2">目前無當月待辦事項</span>`;
+        return;
+      }
+
+      state.todos.forEach(todo => {
+        const card = document.createElement('div');
+        card.className = "flex-none bg-gray-900 border border-gray-800 hover:border-gray-700 px-3.5 py-2.5 rounded-xl shadow-sm text-xs flex items-center space-x-2";
+        card.innerHTML = `
+          <i class="fa-solid fa-pin-angle text-primary text-sm"></i>
+          <span class="text-gray-200 font-medium whitespace-nowrap">${escapeHtml(todo.text)}</span>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function openTodoModal() {
+      document.getElementById('modal-todo').classList.remove('hidden');
+      renderTodoManageList();
+    }
+
+    function closeTodoModal() {
+      document.getElementById('modal-todo').classList.add('hidden');
+      renderTodos();
+    }
+
+    function renderTodoManageList() {
+      const list = document.getElementById('todo-manage-list');
+      list.innerHTML = '';
+      state.todos.forEach((todo, idx) => {
+        const item = document.createElement('div');
+        item.className = "flex items-center justify-between p-2 bg-gray-900 rounded-lg border border-gray-800 text-xs";
+        item.innerHTML = `
+          <span class="text-gray-200 flex-1 mr-2">${escapeHtml(todo.text)}</span>
+          <button onclick="deleteTodo(${idx})" class="text-danger hover:text-red-400 p-1"><i class="fa-solid fa-trash-can"></i></button>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function addTodo() {
+      const input = document.getElementById('new-todo-input');
+      const val = input.value.trim();
+      if (val) {
+        state.todos.push({ id: String(Date.now()), text: val });
+        input.value = '';
+        saveTodosToCloud();
+        renderTodoManageList();
+      }
+    }
+
+    function deleteTodo(index) {
+      state.todos.splice(index, 1);
+      saveTodosToCloud();
+      renderTodoManageList();
+    }
+
+    function switchCategory(cat) {
+      currentCategory = cat;
+      const categoryTitles = {
+        project: { title: '專案列表', icon: 'fa-diagram-project', color: 'text-primary' },
+        plan: { title: '企劃列表', icon: 'fa-lightbulb', color: 'text-yellow-400' },
+        competition: { title: '比賽列表', icon: 'fa-trophy', color: 'text-amber-500' },
+        commercial: { title: '商演列表', icon: 'fa-briefcase', color: 'text-secondary' },
+        event: { title: '活動表演列表', icon: 'fa-masks-theater', color: 'text-pink-400' },
+        weekly: { title: '當週人力狀況', icon: 'fa-users', color: 'text-secondary' }
+      };
+
+      if (cat === 'weekly') {
+        document.getElementById('panel-items').classList.add('hidden');
+        document.getElementById('panel-weekly').classList.remove('hidden');
+      } else {
+        document.getElementById('panel-weekly').classList.add('hidden');
+        document.getElementById('panel-items').classList.remove('hidden');
+        
+        document.getElementById('current-category-title').innerText = categoryTitles[cat].title;
+        const iconEl = document.getElementById('current-category-icon');
+        iconEl.className = `fa-solid ${categoryTitles[cat].icon} ${categoryTitles[cat].color}`;
+        renderItemsList();
+      }
+    }
+
+    function renderItemsList() {
+      const container = document.getElementById('items-list-container');
+      container.innerHTML = '';
+
+      const filtered = state.items.filter(item => item.category === currentCategory);
+      filtered.sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0));
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-8 text-gray-500 text-sm">
+            <i class="fa-regular fa-folder-open text-3xl mb-2 block text-gray-600"></i>
+            目前尚無相關紀錄，請點擊右上方「+ 新增項目」
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(item => {
+        const card = document.createElement('div');
+        card.className = `bg-gray-900 border ${item.isPinned ? 'border-primary/60 bg-gradient-to-r from-gray-900 via-gray-900 to-primary/10' : 'border-gray-800'} rounded-xl p-4 transition shadow-sm`;
+
+        card.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div class="flex items-center space-x-2">
+              ${item.isPinned ? '<i class="fa-solid fa-thumbtack text-primary text-xs" title="已釘選至頂部"></i>' : ''}
+              <h4 class="font-bold text-white text-base">${escapeHtml(item.title)}</h4>
+            </div>
+            
+            <div class="relative group">
+              <button class="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">
+                <i class="fa-solid fa-ellipsis-vertical"></i>
+              </button>
+              <div class="absolute right-0 top-8 w-28 bg-gray-800 border border-gray-700 rounded-xl shadow-xl hidden group-hover:block z-20 overflow-hidden">
+                <button onclick="editItem('${item.id}')" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-700 text-gray-200 flex items-center gap-2">
+                  <i class="fa-solid fa-pen"></i> 編輯
+                </button>
+                <button onclick="togglePinItem('${item.id}')" class="w-full text-left px-3 py-2 text-xs hover:bg-gray-700 text-gray-200 flex items-center gap-2">
+                  <i class="fa-solid fa-thumbtack"></i> ${item.isPinned ? '取消釘選' : '釘選至頂'}
+                </button>
+                <button onclick="deleteItem('${item.id}')" class="w-full text-left px-3 py-2 text-xs hover:bg-red-950 text-danger flex items-center gap-2 border-t border-gray-700">
+                  <i class="fa-solid fa-trash"></i> 刪除
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-400">
+            <div><span class="text-gray-500">總負責人:</span> <strong class="text-gray-200">${escapeHtml(item.mainLeader)}</strong> ${item.subLeader ? `(子: ${escapeHtml(item.subLeader)})` : ''}</div>
+            <div><span class="text-gray-500">使用歌曲:</span> <span class="text-gray-300">${escapeHtml(item.song || '未設定')}</span></div>
+            <div><span class="text-gray-500">預計拍攝:</span> <span class="text-secondary font-mono">${item.shootDate || '未定'}</span></div>
+            <div><span class="text-gray-500">棒子資訊:</span> <span class="text-gray-300">${escapeHtml(item.stickInfo || '無')}</span></div>
+          </div>
+
+          <div class="mt-2 text-xs text-gray-400">
+            <span class="text-gray-500">參與人員:</span> ${item.members ? item.members.map(m => `<span class="inline-block bg-gray-800 text-gray-300 px-1.5 py-0.5 rounded mr-1 mb-1">${escapeHtml(m)}</span>`).join('') : '無'}
+          </div>
+
+          <div class="mt-3 pt-3 border-t border-gray-800/80">
+            <button onclick="toggleMatrixDetail('${item.id}')" class="w-full py-1.5 px-3 bg-gray-800/60 hover:bg-gray-800 text-xs font-semibold text-secondary rounded-lg flex items-center justify-between transition">
+              <span><i class="fa-solid fa-chart-simple mr-1.5"></i> 檢視段落與當週人力出席比對</span>
+              <i id="matrix-icon-${item.id}" class="fa-solid fa-chevron-down text-xs transition-transform"></i>
+            </button>
+            <div id="matrix-container-${item.id}" class="hidden mt-3 p-3 bg-gray-950/60 rounded-xl border border-gray-800/80 space-y-2">
+              ${renderSegmentMatrix(item)}
+            </div>
+          </div>
+        `;
+
+        container.appendChild(card);
+      });
+    }
+
+    function toggleMatrixDetail(itemId) {
+      const el = document.getElementById(`matrix-container-${itemId}`);
+      const icon = document.getElementById(`matrix-icon-${itemId}`);
+      if (el.classList.contains('hidden')) {
+        el.classList.remove('hidden');
+        icon.classList.add('rotate-180');
+      } else {
+        el.classList.add('hidden');
+        icon.classList.remove('rotate-180');
+      }
+    }
+
+    function renderSegmentMatrix(item) {
+      const segments = [
+        { key: 'a', name: 'A melo' },
+        { key: 'b', name: 'B melo' },
+        { key: 'c', name: 'C melo' },
+        { key: 'last', name: 'Last' }
+      ];
+
+      let html = `<div class="text-xs text-gray-400 mb-2 font-semibold">當週各天動態出席狀況比對：</div><div class="space-y-2">`;
+
+      currentWeekDays.forEach(d => {
+        // Collect members who are available on this specific day
+        const availableMembersOnDay = state.attendance
+          .filter(a => !a.absent && a.availableDays && a.availableDays.includes(d.key))
+          .map(a => a.userName.trim());
+
+        html += `<div class="p-2 bg-gray-900 rounded-lg border border-gray-800 text-xs flex flex-wrap items-center gap-2">
+          <span class="font-bold text-gray-300 w-36">${d.displayText}:</span>`;
+
+        segments.forEach(seg => {
+          const reqMembers = (item.segments && item.segments[seg.key]) ? item.segments[seg.key] : [];
+          
+          if (reqMembers.length === 0) {
+            html += `<span class="px-2 py-0.5 rounded text-[11px] bg-gray-800 text-gray-500">${seg.name}: 未設</span>`;
+          } else {
+            // Check if every required member for this segment is available
+            const isFull = reqMembers.every(m => availableMembersOnDay.includes(m.trim()));
+            const colorClass = isFull 
+              ? 'bg-statusGreen/20 text-green-400 border border-statusGreen/40 font-bold' 
+              : 'bg-statusGray/20 text-gray-400 border border-statusGray/30';
+
+            html += `<span class="px-2 py-0.5 rounded text-[11px] font-medium ${colorClass}" title="所需成員: ${reqMembers.join(', ')}">
+              ${seg.name}: ${isFull ? '全到 ✓' : '未到齊'}
+            </span>`;
+          }
+        });
+
+        html += `</div>`;
+      });
+
+      html += `</div>`;
+      return html;
+    }
+
+    function openItemModal(itemData = null) {
+      document.getElementById('modal-item').classList.remove('hidden');
+      const titleEl = document.getElementById('modal-item-title');
+      const form = document.querySelector('#modal-item form');
+      form.reset();
+
+      if (itemData) {
+        titleEl.innerText = "編輯專案/企劃/活動";
+        document.getElementById('item-form-id').value = itemData.id;
+        document.getElementById('item-form-category').value = itemData.category;
+        document.getElementById('item-form-title').value = itemData.title;
+        document.getElementById('item-form-main-leader').value = itemData.mainLeader;
+        document.getElementById('item-form-sub-leader').value = itemData.subLeader || '';
+        document.getElementById('item-form-song').value = itemData.song || '';
+        document.getElementById('item-form-shoot-date').value = itemData.shootDate || '';
+        document.getElementById('item-form-members').value = itemData.members ? itemData.members.join(', ') : '';
+        document.getElementById('item-form-stick-info').value = itemData.stickInfo || '';
+
+        if (itemData.segments) {
+          document.getElementById('item-form-seg-a').value = itemData.segments.a ? itemData.segments.a.join(', ') : '';
+          document.getElementById('item-form-seg-b').value = itemData.segments.b ? itemData.segments.b.join(', ') : '';
+          document.getElementById('item-form-seg-c').value = itemData.segments.c ? itemData.segments.c.join(', ') : '';
+          document.getElementById('item-form-seg-last').value = itemData.segments.last ? itemData.segments.last.join(', ') : '';
+        }
+      } else {
+        titleEl.innerText = "新增企劃/專案/活動表演";
+        document.getElementById('item-form-id').value = '';
+        document.getElementById('item-form-category').value = currentCategory;
+      }
+    }
+
+    function closeItemModal() {
+      document.getElementById('modal-item').classList.add('hidden');
+    }
+
+    function handleItemFormSubmit(e) {
+      e.preventDefault();
+      const idVal = document.getElementById('item-form-id').value;
+      const parseList = (str) => str ? str.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      const newItem = {
+        id: idVal || String(Date.now()),
+        category: document.getElementById('item-form-category').value,
+        title: document.getElementById('item-form-title').value.trim(),
+        mainLeader: document.getElementById('item-form-main-leader').value.trim(),
+        subLeader: document.getElementById('item-form-sub-leader').value.trim(),
+        song: document.getElementById('item-form-song').value.trim(),
+        shootDate: document.getElementById('item-form-shoot-date').value,
+        members: parseList(document.getElementById('item-form-members').value),
+        stickInfo: document.getElementById('item-form-stick-info').value.trim(),
+        segments: {
+          a: parseList(document.getElementById('item-form-seg-a').value),
+          b: parseList(document.getElementById('item-form-seg-b').value),
+          c: parseList(document.getElementById('item-form-seg-c').value),
+          last: parseList(document.getElementById('item-form-seg-last').value)
+        },
+        isPinned: false
+      };
+
+      if (idVal) {
+        const idx = state.items.findIndex(i => String(i.id) === String(idVal));
+        if (idx !== -1) {
+          newItem.isPinned = state.items[idx].isPinned;
+          state.items[idx] = newItem;
+        }
+      } else {
+        state.items.push(newItem);
+      }
+
+      saveItemsToCloud();
+      closeItemModal();
+      renderItemsList();
+    }
+
+    function editItem(id) {
+      const item = state.items.find(i => String(i.id) === String(id));
+      if (item) openItemModal(item);
+    }
+
+    function togglePinItem(id) {
+      const item = state.items.find(i => String(i.id) === String(id));
+      if (item) {
+        item.isPinned = !item.isPinned;
+        saveItemsToCloud();
+        renderItemsList();
+      }
+    }
+
+    function deleteItem(id) {
+      if (confirm('確定要刪除這個項目嗎？')) {
+        state.items = state.items.filter(i => String(i.id) !== String(id));
+        saveItemsToCloud();
+        renderItemsList();
+      }
+    }
+
+    function switchWeeklySubTab(tab) {
+      const btnSurvey = document.getElementById('tab-weekly-survey');
+      const btnSchedule = document.getElementById('tab-weekly-schedule');
+      const viewSurvey = document.getElementById('weekly-subview-survey');
+      const viewSchedule = document.getElementById('weekly-subview-schedule');
+
+      if (tab === 'survey') {
+        btnSurvey.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-secondary text-black shadow transition";
+        btnSchedule.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition";
+        viewSurvey.classList.remove('hidden');
+        viewSchedule.classList.add('hidden');
+      } else {
+        btnSchedule.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-secondary text-black shadow transition";
+        btnSurvey.className = "flex-1 py-2 text-xs sm:text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition";
+        viewSchedule.classList.remove('hidden');
+        viewSurvey.classList.add('hidden');
+        renderAttendanceSchedule();
+      }
+    }
+
+    function setupSurveyForm() {
+      if (!state.currentUser) return;
+      document.getElementById('survey-user-name').value = state.currentUser.name;
+      
+      activeSurveyWeekDays = getWeekDays(new Date(Date.now() + surveyWeekOffset * 7 * 86400000));
+      document.getElementById('survey-date-range').innerText = getSurveyRangeString(activeSurveyWeekDays);
+
+      const grid = document.getElementById('survey-days-grid');
+      grid.innerHTML = '';
+
+      activeSurveyWeekDays.forEach(day => {
+        const label = document.createElement('label');
+        label.className = "flex flex-col items-center justify-center p-2.5 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer hover:bg-gray-750 transition text-xs font-medium space-y-1 text-center";
+        label.innerHTML = `
+          <div class="flex items-center space-x-1">
+            <input type="checkbox" name="survey-day" value="${day.key}" class="accent-secondary w-4 h-4">
+            <span class="font-bold text-gray-200">${day.label}</span>
+          </div>
+          <span class="text-[11px] text-secondary font-mono">${day.shortDate}</span>
+        `;
+        grid.appendChild(label);
+      });
+
+      const userAtt = state.attendance.find(a => a.userName === state.currentUser.name && a.weekStart === activeSurveyWeekDays[0].fullDate);
+      if (userAtt) {
+        document.getElementById('survey-absent-check').checked = userAtt.absent || false;
+        document.getElementById('survey-note').value = userAtt.note || '';
+        if (userAtt.availableDays && !userAtt.absent) {
+          userAtt.availableDays.forEach(day => {
+            const cb = document.querySelector(`input[name="survey-day"][value="${day}"]`);
+            if (cb) cb.checked = true;
+          });
+        }
+        toggleSurveyAbsent(userAtt.absent || false);
+      } else {
+        document.getElementById('survey-absent-check').checked = false;
+        document.getElementById('survey-note').value = '';
+        toggleSurveyAbsent(false);
+      }
+    }
+
+    function toggleSurveyAbsent(isAbsent) {
+      const container = document.getElementById('survey-days-container');
+      if (isAbsent) {
+        container.classList.add('opacity-40', 'pointer-events-none');
+      } else {
+        container.classList.remove('opacity-40', 'pointer-events-none');
+      }
+    }
+
+    function handleSurveySubmit(e) {
+      e.preventDefault();
+      const userName = state.currentUser.name;
+      const isAbsent = document.getElementById('survey-absent-check').checked;
+      const note = document.getElementById('survey-note').value.trim();
+
+      const selectedDays = [];
+      if (!isAbsent) {
+        const checkboxes = document.querySelectorAll('input[name="survey-day"]:checked');
+        checkboxes.forEach(cb => selectedDays.push(cb.value));
+      }
+
+      const weekStartKey = activeSurveyWeekDays[0].fullDate;
+      const attIndex = state.attendance.findIndex(a => a.userName === userName && a.weekStart === weekStartKey);
+      
+      const newRecord = {
+        userName,
+        weekStart: weekStartKey,
+        availableDays: selectedDays,
+        absent: isAbsent,
+        note
+      };
+
+      if (attIndex !== -1) {
+        state.attendance[attIndex] = newRecord;
+      } else {
+        state.attendance.push(newRecord);
+      }
+
+      saveAttendanceToCloud();
+      alert(`已成功儲存並多端同步 [${getSurveyRangeString(activeSurveyWeekDays)}] 的人力調查！`);
+    }
+
+    function renderAttendanceSchedule() {
+      document.getElementById('schedule-week-label').innerText = getSurveyRangeString(currentWeekDays);
+      const container = document.getElementById('attendance-schedule-grid');
+      container.innerHTML = '';
+
+      currentWeekDays.forEach(day => {
+        const available = state.attendance.filter(a => a.weekStart === currentWeekDays[0].fullDate && !a.absent && a.availableDays && a.availableDays.includes(day.key));
+
+        const dayCard = document.createElement('div');
+        dayCard.className = "bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-2";
+        
+        let membersHtml = '';
+        if (available.length === 0) {
+          membersHtml = `<span class="text-xs text-gray-500 italic">無可出席成員</span>`;
+        } else {
+          membersHtml = available.map(a => `
+            <div class="flex items-center justify-between bg-gray-800/80 px-2.5 py-1.5 rounded-lg text-xs">
+              <span class="font-bold text-gray-200">${escapeHtml(a.userName)}</span>
+              ${a.note ? `<span class="text-gray-400 text-[11px] truncate max-w-[150px]" title="${escapeHtml(a.note)}"><i class="fa-regular fa-comment-dots mr-1"></i>${escapeHtml(a.note)}</span>` : ''}
+            </div>
+          `).join('');
+        }
+
+        dayCard.innerHTML = `
+          <div class="flex justify-between items-center border-b border-gray-800 pb-1.5">
+            <span class="font-bold text-sm text-secondary">${day.displayText}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 font-mono">可出席: ${available.length} 人</span>
+          </div>
+          <div class="space-y-1 pt-1">
+            ${membersHtml}
+          </div>
+        `;
+
+        container.appendChild(dayCard);
+      });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+    }
+
+    window.onload = function() {
+      switchAuthTab('user');
+    };
+  </script>
+</body>
+</html>
